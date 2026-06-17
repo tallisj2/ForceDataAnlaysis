@@ -285,8 +285,9 @@ if file is not None:
         Fz_avg_break = float(breaking_df["power"].mean())             # W
         Fz_avg_prop = float(prop_df["power"].mean())                  # W
 
-        Fy_imp = float(np.trapz(analysis_raw["Fy"], analysis_raw["time"]))  # Ns
-        Fy_power = float(analysis_raw["power_Fy"].mean())                   # W
+        # FIXED: np.trapezoid instead of np.trapz
+        Fy_imp = float(np.trapezoid(analysis_raw["Fy"], analysis_raw["time"]))  # Ns
+        Fy_power = float(analysis_raw["power_Fy"].mean())                       # W
 
         avg_ratio = float(
             analysis_raw["ratio"].replace([np.inf, -np.inf], np.nan).mean()
@@ -706,3 +707,4 @@ if file is not None:
             export_df.to_csv(index=False),
             "curves_101pts.csv"
         )
+``
