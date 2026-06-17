@@ -37,6 +37,7 @@ st.markdown(
 - Upload a **CSV or TXT** file containing **6 columns in this exact order**: `Fx, Fy, Fz, Mx, My, Mz`
 - If the participant stood on the plate in the opposite horizontal orientation, tick the **Swap X/Y** checkbox
 - Use the slider to select an analysis window that includes **a minimum of 1 second of quiet standing before the start of the jump**
+- Set the **movement threshold percentage of SD** (for example: `500` means `BW - 5 × SD`)
 - Click **Run Analysis**
 - Review the results in the **summary table** and the **figures in tabs**
 - Export:
@@ -92,11 +93,18 @@ if file is not None:
         st.warning("X/Y channels swapped: Fx↔Fy and Mx↔My are being used for all subsequent analysis.")
 
     # --------------------------------------------------------
-    # SAMPLING
+    # SAMPLING + THRESHOLD PERCENT
     # --------------------------------------------------------
     fs = st.number_input("Sampling Frequency (Hz)", min_value=1.0, value=1000.0, step=1.0)
     dt = 1.0 / fs
     df["time"] = np.arange(len(df)) * dt
+
+    threshold_percent = st.number_input(
+        "Movement threshold (% of SD subtracted from body weight; 500 = BW - 5×SD)",
+        min_value=0.0,
+        value=500.0,
+        step=10.0
+    )
 
     # ========================================================
     # BASE FIGURE (ALWAYS SHOWN FIRST — NO EVENT MARKERS)
@@ -165,7 +173,9 @@ if file is not None:
         BW = baseline.mean()       # N
         SD = baseline.std()        # N
         mass = BW / 9.81           # kg
-        threshold = BW + (5 * SD)  # N
+
+        # CORRECTED MOVEMENT THRESHOLD USED THROUGHOUT
+        threshold = BW - ((threshold_percent / 100.0) * SD)  # N
 
         # ----------------------------------------------------
         # CORE KINETICS / KINEMATICS
@@ -201,12 +211,20 @@ if file is not None:
         # ----------------------------------------------------
         # EVENT DETECTION
         # ----------------------------------------------------
-        onset_candidates = trial_df[trial_df["Fz"] > threshold]
-        if onset_candidates.empty:
-            st.error("Movement onset could not be detected: Fz never exceeded the movement threshold.")
+        # Onset = first run of consecutive samples below threshold
+        min_duration_below_threshold = 0.02   # 20 ms
+        n_consecutive = max(1, int(min_duration_below_threshold * fs))
+
+        below_thresh = trial_df["Fz"] < threshold
+        rolling_below = below_thresh.rolling(window=n_consecutive).sum()
+
+        onset_candidates = trial_df.index[rolling_below >= n_consecutive]
+
+        if len(onset_candidates) == 0:
+            st.error("Movement onset could not be detected: Fz never stayed below the movement threshold long enough.")
             st.stop()
 
-        onset_idx = onset_candidates.index[0]
+        onset_idx = onset_candidates[0] - (n_consecutive - 1)
         onset_time = trial_df.loc[onset_idx, "time"]
 
         trial_post_onset = trial_df[trial_df["time"] >= onset_time].copy()
@@ -637,7 +655,7 @@ if file is not None:
             "Description": [
                 "Estimated body mass from quiet standing force",
                 "Mean quiet standing vertical force",
-                "Movement threshold defined as BW + 5×SD",
+                "Movement threshold defined as BW - (% of SD)",
                 "Duration from movement onset to take-off",
                 "Predicted horizontal jump distance from take-off velocities",
                 "Minimum centre-of-mass displacement during the analysed movement",
