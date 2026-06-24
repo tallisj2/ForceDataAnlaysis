@@ -37,6 +37,7 @@ st.markdown(
 - Upload a **CSV or TXT** file containing **6 columns in this exact order**: `Fx, Fy, Fz, Mx, My, Mz`
 - If the participant stood on the plate in the opposite horizontal orientation, tick the **Swap X/Y** checkbox
 - Use the slider to select an analysis window that includes **a minimum of 1 second of quiet standing before the start of the jump**
+- After reviewing the raw Fz/Fy visualisation, optionally tick **Invert Fy data for analysis** if the horizontal force direction needs reversing
 - Set the **movement threshold percentage of SD** (for example: `500` means `BW - 5 × SD`)
 - Click **Run Analysis**
 - Review the results in the **summary table** and the **figures in tabs**
@@ -107,7 +108,8 @@ if file is not None:
     )
 
     # ========================================================
-    # BASE FIGURE (ALWAYS SHOWN FIRST — NO EVENT MARKERS)
+    # BASE FIGURE
+    # SHOWN BEFORE OPTIONAL Fy INVERSION
     # ========================================================
     base_fig = go.Figure()
 
@@ -146,6 +148,24 @@ if file is not None:
     )
 
     st.plotly_chart(base_fig, use_container_width=True)
+
+    # ========================================================
+    # OPTIONAL Fy INVERSION AFTER RAW DATA VISUALISATION
+    # ========================================================
+    invert_fy = st.checkbox(
+        "Invert Fy data for analysis",
+        help=(
+            "Tick this if the Fy signal is in the opposite horizontal direction. "
+            "If selected, all subsequent horizontal-force calculations, figures, "
+            "summary outcomes, and exported curves will use inverted Fy values."
+        )
+    )
+
+    if invert_fy:
+        df["Fy"] = -df["Fy"]
+        st.warning(
+            "Fy has been inverted for all subsequent analysis, figures, summary outcomes, and exported waveform data."
+        )
 
     if st.button("Run Analysis"):
         st.session_state.run_analysis = True
@@ -195,10 +215,10 @@ if file is not None:
 
         trial_df["power_Fy"] = trial_df["Fy"] * trial_df["vel_Fy"]
 
-        # Resultant based on net vertical and raw horizontal
+        # Resultant based on net vertical and raw/inverted horizontal Fy
         trial_df["resultant"] = np.sqrt(trial_df["net_Fz"]**2 + trial_df["Fy"]**2)
 
-        # Angle based on raw Fz and raw Fy
+        # Angle based on raw Fz and raw/inverted Fy
         trial_df["angle"] = np.degrees(np.arctan2(trial_df["Fy"], trial_df["Fz"]))
 
         # Force ratio = resultant / net vertical force
@@ -232,6 +252,7 @@ if file is not None:
             (trial_post_onset["Fz"] < 10) &
             (trial_post_onset["velocity"] > 0)
         ]
+
         if takeoff_candidates.empty:
             st.error("Take-off could not be detected: no point with Fz < 10 N and positive vertical velocity was found after onset.")
             st.stop()
@@ -264,6 +285,7 @@ if file is not None:
 
         prop_start = None
         prop_start_idx = None
+
         for i in range(1, len(vel_arr)):
             if vel_arr[i - 1] < 0 and vel_arr[i] >= 0:
                 prop_start = time_arr[i]
@@ -285,7 +307,7 @@ if file is not None:
         ].copy()
 
         prop_df = analysis_raw[
-            (analysis_raw["time"] > prop_start)
+            analysis_raw["time"] > prop_start
         ].copy()
 
         if len(breaking_df) == 0 or len(prop_df) == 0:
@@ -383,54 +405,67 @@ if file is not None:
         # ----------------------------------------------------
         onset_Fz = float(trial_df.loc[onset_idx, "Fz"])
         min_Fz = float(analysis_raw.loc[min_idx, "Fz"])
+
         prop_row = int((analysis_raw["time"] - prop_start).abs().idxmin())
         prop_Fz = float(analysis_raw.loc[prop_row, "Fz"])
+
         takeoff_Fz = float(trial_df.loc[takeoff_idx, "Fz"])
 
         # ----------------------------------------------------
         # FIGURES
         # ----------------------------------------------------
         force_fig = go.Figure()
+
         force_fig.add_trace(go.Scatter(
             x=trial_df["time"], y=trial_df["Fz"],
             mode="lines",
             name="Fz (N)",
             yaxis="y1"
         ))
+
         force_fig.add_trace(go.Scatter(
             x=trial_df["time"], y=trial_df["Fy"],
             mode="lines",
             name="Fy (N)",
             yaxis="y2"
         ))
+
         force_fig.add_trace(go.Scatter(
             x=[onset_time], y=[onset_Fz],
             mode="markers",
             name="Onset",
             marker=dict(size=10, color="blue")
         ))
+
         force_fig.add_trace(go.Scatter(
             x=[min_time], y=[min_Fz],
             mode="markers",
             name="Start Breaking",
             marker=dict(size=10, color="orange")
         ))
+
         force_fig.add_trace(go.Scatter(
             x=[prop_start], y=[prop_Fz],
             mode="markers",
             name="Start Propulsion",
             marker=dict(size=10, color="green")
         ))
+
         force_fig.add_trace(go.Scatter(
             x=[takeoff_time], y=[takeoff_Fz],
             mode="markers",
             name="Take-off",
             marker=dict(size=10, color="red")
         ))
+
         force_fig.add_hline(y=threshold, line_dash="dash", line_color="purple")
 
+        force_fig_title = "Force-Time Curve with Events"
+        if invert_fy:
+            force_fig_title += " — Fy Inverted"
+
         force_fig.update_layout(
-            title="Force-Time Curve with Events",
+            title=force_fig_title,
             xaxis_title="Time (s)",
             yaxis=dict(title="Fz (N)"),
             yaxis2=dict(title="Fy (N)", overlaying="y", side="right"),
@@ -438,18 +473,21 @@ if file is not None:
         )
 
         vel_fig = go.Figure()
+
         vel_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["velocity"],
             mode="lines",
             name="Vertical Velocity (m/s)",
             yaxis="y1"
         ))
+
         vel_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["vel_Fy"],
             mode="lines",
             name="Horizontal Velocity (m/s)",
             yaxis="y2"
         ))
+
         vel_fig.update_layout(
             title="Velocity-Time Curve",
             xaxis_title="Time (s)",
@@ -458,18 +496,21 @@ if file is not None:
         )
 
         power_fig = go.Figure()
+
         power_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["power"],
             mode="lines",
             name="Vertical Power (W)",
             yaxis="y1"
         ))
+
         power_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["power_Fy"],
             mode="lines",
             name="Horizontal Power (W)",
             yaxis="y2"
         ))
+
         power_fig.update_layout(
             title="Power-Time Curve",
             xaxis_title="Time (s)",
@@ -478,11 +519,13 @@ if file is not None:
         )
 
         disp_fig = go.Figure()
+
         disp_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["disp"],
             mode="lines",
             name="Displacement (m)"
         ))
+
         disp_fig.update_layout(
             title="Displacement-Time Curve",
             xaxis_title="Time (s)",
@@ -490,11 +533,13 @@ if file is not None:
         )
 
         resultant_fig = go.Figure()
+
         resultant_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["resultant"],
             mode="lines",
             name="Resultant Force (N)"
         ))
+
         resultant_fig.update_layout(
             title="Resultant Force",
             xaxis_title="Time (s)",
@@ -502,11 +547,13 @@ if file is not None:
         )
 
         angle_fig = go.Figure()
+
         angle_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["angle"],
             mode="lines",
             name="Vector Angle (deg)"
         ))
+
         angle_fig.update_layout(
             title="Vector Angle",
             xaxis_title="Time (s)",
@@ -514,18 +561,21 @@ if file is not None:
         )
 
         cop_fig = go.Figure()
+
         cop_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["COP_AP"] * 100,
             mode="lines",
             name="COP AP (cm)",
             yaxis="y1"
         ))
+
         cop_fig.add_trace(go.Scatter(
             x=analysis_raw["time"], y=analysis_raw["COP_ML"] * 100,
             mode="lines",
             name="COP ML (cm)",
             yaxis="y2"
         ))
+
         cop_fig.update_layout(
             title="COP Components",
             xaxis_title="Time (s)",
@@ -684,10 +734,14 @@ if file is not None:
         })
 
         st.subheader("Summary Outcomes")
+
+        if invert_fy:
+            st.info("Fy-dependent outcomes were calculated using inverted Fy data.")
+
         st.dataframe(summary, use_container_width=True)
 
         # ----------------------------------------------------
-        # NORMALISED EXPORT (101-point waveform only)
+        # NORMALISED EXPORT — 101-point waveform only
         # ----------------------------------------------------
         export_cols = [
             "Fz", "Fy",
